@@ -72,5 +72,5 @@
           end
     - name: Run the installation script
       become: true
-     ansible.builtin.command: /tmp/codedeploy-install auto
+      ansible.builtin.command: /tmp/codedeploy-install auto
   when: "'codedeploy-agent' not in ansible_facts.packages"
