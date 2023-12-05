@@ -23,8 +23,8 @@
         dest: /tmp/codedeploy-install
         mode: 0700
         
-   - name: Add extra options for Debian 12
-     ansible.builtin.lineinfile:
+    - name: Add extra options for Debian 12
+      ansible.builtin.lineinfile:
         path: /tmp/codedeploy-install
         insertbefore: 'install_cmd << package_file.path'
         block: |
