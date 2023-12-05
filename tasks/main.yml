@@ -3,7 +3,7 @@
   include_vars: "{{ ansible_os_family }}.yml"
 
 - name: Install Dependencies
-  package:
+  ansible.builtin.package:
     name: "{{ item }}"
     state: present
   with_items: "{{ dependencies }}"
@@ -12,18 +12,65 @@
 # Install Code Deploy
 #---------------------------------------
 - name: Gather package facts
-  package_facts:
+  ansible.builtin.package_facts:
     manager: auto
 
 - name: Install Code Deploy Agent
   block:
     - name: Fetch the CodeDeploy install script
-      get_url:
+      ansible.builtin.get_url:
         url: "https://aws-codedeploy-{{ ansible_ec2_placement_region }}.s3.{{ ansible_ec2_placement_region }}.amazonaws.com/latest/install"
         dest: /tmp/codedeploy-install
         mode: 0700
-
+        
+   - name: Add extra options for Debian 12
+     ansible.builtin.lineinfile:
+        path: /tmp/codedeploy-install
+        insertbefore: 'install_cmd << package_file.path'
+        block: |
+          if (package_extension == '.deb')
+            require 'tmpdir'
+            repacked_package_file = Tempfile.new(["#{package_name}_repacked.tmp-", package_extension])
+            repacked_package_file.close
+            repacked_package_dir = Dir.mktmpdir("codedeploy_repack.tmp-")
+            unpack_cmd = ['/usr/bin/dpkg-deb', '-x', package_file.path, repacked_package_dir]
+            control_unpack_cmd = ['/usr/bin/dpkg-deb', '-e', package_file.path, "#{repacked_package_dir}/DEBIAN"]
+            control_fix_cmd = ['/usr/bin/sed', '-i', "s/ruby3\.0$/ruby3.0 | ruby3.1 | ruby3.2/g", "#{repacked_package_dir}/DEBIAN/control"]
+            repack_cmd = ['/usr/bin/dpkg-deb', '-b', repacked_package_dir, repacked_package_file.path]
+            if (!run_command(*unpack_cmd))
+              @log.error("Error unpacking #{package_file.path} to #{repacked_package_dir}.")
+              repacked_package_file.unlink
+              package_file.unlink
+              FileUtils.remove_entry(repacked_package_dir)
+              exit(1)
+            end
+            if (!run_command(*control_unpack_cmd))
+              @log.error("Error unpacking control #{package_file.path} to #{repacked_package_dir}/DEBIAN.")
+              repacked_package_file.unlink
+              package_file.unlink
+              FileUtils.remove_entry(repacked_package_dir)
+              exit(1)
+            end
+            if (!run_command(*control_fix_cmd))
+              @log.error("Error fixing control #{repacked_package_dir}/DEBIAN/control.")
+              repacked_package_file.unlink
+              package_file.unlink
+              FileUtils.remove_entry(repacked_package_dir)
+              exit(1)
+            end
+            if (!run_command(*repack_cmd))
+              @log.error("Error repacking #{repacked_package_file.path}.")
+              repacked_package_file.unlink
+              package_file.unlink
+              FileUtils.remove_entry(repacked_package_dir)
+              exit(1)
+            end
+            @log.info("Package has been repackaged with missing supported ruby versions in depends")
+            package_file.unlink
+            FileUtils.remove_entry(repacked_package_dir)
+            package_file = repacked_package_file
+          end
     - name: Run the installation script
       become: true
-      command: /tmp/codedeploy-install auto
+     ansible.builtin.command: /tmp/codedeploy-install auto
   when: "'codedeploy-agent' not in ansible_facts.packages"
